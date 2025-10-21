@@ -1,0 +1,140 @@
+<meta name='viewport' content='width=device-width, initial-scale=1'/><!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>GameBoy Chess</title>
+  <style>
+    :root{
+      --gb-0:#0f380f; /* darkest */
+      --gb-1:#306230;
+      --gb-2:#8bac0f;
+      --gb-3:#9bbc0f; /* lightest */
+      --outline:#001a00;
+    }
+    html,body{height:100%;margin:0;background:var(--gb-0);color:var(--gb-3);font-family:monospace}
+    .wrap{display:flex;gap:16px;align-items:flex-start;justify-content:center;padding:20px;flex-wrap:wrap}
+    canvas{image-rendering: pixelated; background: linear-gradient(180deg,var(--gb-1),var(--gb-0)); box-shadow: 0 8px 24px rgba(0,0,0,.6); border:3px solid var(--gb-2); border-radius:8px;}
+    .panel{max-width:320px}
+    button{background:var(--gb-1);color:var(--gb-3);border:2px solid var(--gb-2);padding:8px 10px;margin:6px;cursor:pointer}
+    button:hover{background:var(--gb-2);color:var(--gb-0)}
+    h1{font-size:18px;margin:0 0 10px}
+    .small{font-size:13px;color:var(--gb-2)}
+    .moves{height:200px;overflow:auto;border:2px solid var(--gb-2);padding:8px;margin-top:8px;background:linear-gradient(180deg,var(--gb-0),#072007)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div>
+      <canvas id="board" width="192" height="192"></canvas>
+    </div>
+    <div class="panel">
+      <h1>GameBoy Chess</h1>
+      <div class="small">Pixel-style chess with GameBoy palette. Click a piece to show legal moves.</div>
+      <div style="margin-top:10px">
+        <button id="new">New Game</button>
+        <button id="flip">Flip Board</button>
+        <button id="undo">Undo</button>
+        <button id="fullscreen">Fullscreen</button>
+      </div>
+      <div style="margin-top:10px">Turn: <span id="turn">White</span></div>
+      <div class="moves" id="moves"></div>
+      <div style="margin-top:8px; font-size:12px">Notes: No castling/en-passant. Promotion auto to queen.</div>
+    </div>
+  </div>
+
+<script>
+const SCALE = 3;
+const TILE = 8 * SCALE;
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+const palette = ["#0f380f","#306230","#8bac0f","#9bbc0f"];
+let board = [], history = [], whiteToMove = true, flipped = false;
+
+const SPRITES = {
+  'P':["...11...","..1221..",".112221.",".112221.",".112221.","..1221..","...11...","...11..."],
+  'R':["33....33","33....33",".333333.",".3.33.3.",".333333.",".3....3.",".3....3.","........"],
+  'N':["........","..33.3..",".33333..",".3333...","..33....",".3.3....",".3......","........"],
+  'B':["....3...","...333..","..3333..",".333333.","..3333..","...333..","....3...","...333.."],
+  'Q':[".3..3..3","33.333.3",".333333.",".333333.",".333333.","..3333..","...33...","........"],
+  'K':["...3....","...3....",".33333..",".3.3.3..",".33333..","..333...","...3....","........"]
+};
+
+function newGame(){
+  const start = [
+    ['r','n','b','q','k','b','n','r'],
+    ['p','p','p','p','p','p','p','p'],
+    ['.','.','.','.','.','.','.','.'],
+    ['.','.','.','.','.','.','.','.'],
+    ['.','.','.','.','.','.','.','.'],
+    ['.','.','.','.','.','.','.','.'],
+    ['P','P','P','P','P','P','P','P'],
+    ['R','N','B','Q','K','B','N','R']
+  ];
+  board=start.map(r=>r.slice());
+  history=[];whiteToMove=true;render();updateTurn();logMoves([]);
+}
+
+function inBounds(x,y){return x>=0&&x<8&&y>=0&&y<8}
+function pieceAt(x,y){return board[y][x]}
+function isWhitePiece(p){return p&&p!=='.'&&p===p.toUpperCase();}
+function isBlackPiece(p){return p&&p!=='.'&&p===p.toLowerCase();}
+
+function movesFrom(x,y){
+  const p=pieceAt(x,y);if(!p||p==='.'){return []}
+  const white=isWhitePiece(p);if(white!==whiteToMove)return[];
+  const typ=p.toUpperCase();const res=[];
+  const dirs={R:[[1,0],[-1,0],[0,1],[0,-1]],B:[[1,1],[1,-1],[-1,1],[-1,-1]],Q:[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]};
+  if(typ==='P'){
+    const dir=white?-1:1;const startRow=white?6:1;
+    if(inBounds(x,y+dir)&&pieceAt(x,y+dir)==='.')res.push([x,y+dir]);
+    if(y===startRow&&pieceAt(x,y+dir)==='.'&&pieceAt(x,y+2*dir)==='.')res.push([x,y+2*dir]);
+    for(const dx of[-1,1]){const nx=x+dx,ny=y+dir;if(inBounds(nx,ny)){const targ=pieceAt(nx,ny);if(targ!=='.'&&(white?isBlackPiece(targ):isWhitePiece(targ)))res.push([nx,ny]);}}
+    return res;
+  }
+  if(typ==='N'){
+    const steps=[[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]];
+    for(const s of steps){const nx=x+s[0],ny=y+s[1];if(inBounds(nx,ny)){const t=pieceAt(nx,ny);if(t==='.'||(white?isBlackPiece(t):isWhitePiece(t)))res.push([nx,ny]);}}
+    return res;
+  }
+  if(['R','B','Q'].includes(typ)){
+    for(const d of dirs[typ]){let nx=x+d[0],ny=y+d[1];while(inBounds(nx,ny)){const t=pieceAt(nx,ny);if(t==='.')res.push([nx,ny]);else{if(white?isBlackPiece(t):isWhitePiece(t))res.push([nx,ny]);break;}nx+=d[0];ny+=d[1];}}
+    return res;
+  }
+  if(typ==='K'){
+    for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++){if(dx||dy){const nx=x+dx,ny=y+dy;if(inBounds(nx,ny)){const t=pieceAt(nx,ny);if(t==='.'||(white?isBlackPiece(t):isWhitePiece(t)))res.push([nx,ny]);}}}
+    return res;
+  }
+  return res;
+}
+
+function makeMove(sx,sy,tx,ty){const p=pieceAt(sx,sy);if(!p)return false;history.push(JSON.parse(JSON.stringify(board)));board[ty][tx]=p;board[sy][sx]='.';if(p==='P'&&ty===0)board[ty][tx]='Q';if(p==='p'&&ty===7)board[ty][tx]='q';whiteToMove=!whiteToMove;render();updateTurn();logMoves(history.map((b,i)=>`Move ${i+1}`));return true;}
+function undo(){if(history.length){board=history.pop();whiteToMove=!whiteToMove;render();updateTurn();logMoves(history.map((b,i)=>`Move ${i+1}`));}}
+
+function drawTile(x,y,light){ctx.fillStyle=light?palette[2]:palette[1];ctx.fillRect(x*TILE,y*TILE,TILE,TILE);}
+
+function render(){ctx.clearRect(0,0,canvas.width,canvas.height);for(let y=0;y<8;y++){for(let x=0;x<8;x++){const light=(x+y)%2===0;drawTile(x,y,light);const p=board[y][x];if(p!=='.'){drawPiece(p,x,y);}}}}
+
+function drawPiece(p,x,y){const pattern=SPRITES[p.toUpperCase()];if(!pattern)return;const dark=(p===p.toLowerCase());const offsetX=x*TILE+(TILE-8*SCALE)/2;const offsetY=y*TILE+(TILE-8*SCALE)/2;
+// outline for contrast
+ctx.fillStyle='var(--outline)';ctx.fillRect(offsetX-1,offsetY-1,8*SCALE+2,8*SCALE+2);
+for(let py=0;py<8;py++){for(let px=0;px<8;px++){const s=pattern[py][px];if(s==='.'||s==='0')continue;let color=dark?palette[1]:palette[3];if(s==='2')color=palette[2];if(s==='3')color=dark?palette[0]:palette[3];ctx.fillStyle=color;ctx.fillRect(offsetX+px*SCALE,offsetY+py*SCALE,SCALE,SCALE);}}}
+
+function updateTurn(){document.getElementById('turn').textContent=whiteToMove?'White':'Black';}
+function logMoves(list){const el=document.getElementById('moves');el.innerHTML=list.map((l,i)=>`<div>${i+1}. ${l}</div>`).join('');}
+
+let selected=null,legalMoves=[];
+canvas.addEventListener('click',e=>{const rect=canvas.getBoundingClientRect();const cw=canvas.width,ch=canvas.height;let cx=((e.clientX-rect.left)/rect.width)*cw;let cy=((e.clientY-rect.top)/rect.height)*ch;let tx=Math.floor(cx/TILE);let ty=Math.floor(cy/TILE);if(flipped){tx=7-tx;ty=7-ty;}const p=pieceAt(tx,ty);if(selected){for(const m of legalMoves){if(m[0]===tx&&m[1]===ty){makeMove(selected[0],selected[1],tx,ty);selected=null;legalMoves=[];return;}}if(p!=='.'&&(isWhitePiece(p)===whiteToMove)){selected=[tx,ty];legalMoves=movesFrom(tx,ty);render();highlight(selected,legalMoves);return;}selected=null;legalMoves=[];render();return;}else{if(p!=='.'&&(isWhitePiece(p)===whiteToMove)){selected=[tx,ty];legalMoves=movesFrom(tx,ty);render();highlight(selected,legalMoves);return;}}});
+
+function highlight(sel,moves){ctx.fillStyle='rgba(255,255,255,0.15)';ctx.fillRect(sel[0]*TILE,sel[1]*TILE,TILE,TILE);ctx.fillStyle='rgba(155,188,15,0.35)';for(const m of moves){ctx.beginPath();ctx.arc(m[0]*TILE+TILE/2,m[1]*TILE+TILE/2,TILE/6,0,Math.PI*2);ctx.fill();}}
+
+document.getElementById('new').onclick=()=>newGame();
+document.getElementById('undo').onclick=()=>undo();
+document.getElementById('flip').onclick=()=>{flipped=!flipped;canvas.style.transform=flipped?'scaleX(-1) scaleY(-1)':'none';};
+document.getElementById('fullscreen').onclick=()=>{if(!document.fullscreenElement){canvas.requestFullscreen().catch(()=>{});}else{document.exitFullscreen();}};
+
+newGame();
+</script>
+</body>
+</html>
